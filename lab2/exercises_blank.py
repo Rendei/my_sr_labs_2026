@@ -15,46 +15,54 @@ def load_vad_markup(path_to_rttm, signal, fs):
         
     ###########################################################
     # Here is your code
-    
+    with open(path_to_rttm, 'r') as f:
+        for line in f:
+            fields = line.split()
+            if len(fields) < 5:
+                continue
+
+            start = int(round(float(fields[3]) * fs))                      # start of speech segment in samples
+            stop = int(round((float(fields[3]) + float(fields[4])) * fs))  # end of speech segment in samples
+            vad_markup[start:stop] = 1
     ###########################################################
-    
+
     return vad_markup
 
 def framing(signal, window=320, shift=160):
     # Function to create frames from signal
-    
+
     shape   = (int((signal.shape[0] - window)/shift + 1), window)
-    frames  = np.zeros().astype('float32')
+    frames  = np.zeros(shape).astype('float32')
 
     ###########################################################
     # Here is your code
-    
+    frames = np.lib.stride_tricks.sliding_window_view(signal, window)[::shift][:shape[0]].astype('float32')
     ###########################################################
-    
+
     return frames
 
 def frame_energy(frames):
     # Function to compute frame energies
-    
+
     E = np.zeros(frames.shape[0]).astype('float32')
 
     ###########################################################
     # Here is your code
-    
+    E = np.sum(frames, axis=1).astype('float32')  # frames are already squared in energy_gmm_vad
     ###########################################################
-    
+
     return E
 
 def norm_energy(E):
     # Function to normalize energy by mean energy and energy standard deviation
-    
+
     E_norm = np.zeros(len(E)).astype('float32')
 
     ###########################################################
     # Here is your code
-    
+    E_norm = ((E - np.mean(E)) / np.std(E, ddof=1)).astype('float32')
     ###########################################################
-    
+
     return E_norm
 
 def gmm_train(E, gauss_pdf, n_realignment):
@@ -71,15 +79,20 @@ def gmm_train(E, gauss_pdf, n_realignment):
         # E-step
         ###########################################################
         # Here is your code
-
+        for j in range(len(w)):
+            g[:, j] = w[j] * gauss_pdf(E, m[j], sigma[j])
+        g = g / np.maximum(np.sum(g, axis=1, keepdims=True), np.finfo(float).tiny)
         ###########################################################
 
         # M-step
         ###########################################################
         # Here is your code
-
+        M = len(E)
+        w = np.sum(g, axis=0) / M
+        m = np.sum(g * E[:, np.newaxis], axis=0) / (M * w)
+        sigma = np.sqrt(np.sum(g * (E[:, np.newaxis] - m) ** 2, axis=0) / (M * w))
         ###########################################################
-        
+
     return w, m, sigma
 
 def eval_frame_post_prob(E, gauss_pdf, w, m, sigma):
@@ -89,9 +102,10 @@ def eval_frame_post_prob(E, gauss_pdf, w, m, sigma):
 
     ###########################################################
     # Here is your code
-
+    likelihoods = np.array([w[j] * gauss_pdf(E, m[j], sigma[j]) for j in range(len(w))])  # [ncomponents x nframes]
+    g0 = likelihoods[0] / np.maximum(np.sum(likelihoods, axis=0), np.finfo(float).tiny)
     ###########################################################
-            
+
     return g0
 
 def energy_gmm_vad(signal, window, shift, gauss_pdf, n_realignment, vad_thr, mask_size_morph_filt):
@@ -110,7 +124,7 @@ def energy_gmm_vad(signal, window, shift, gauss_pdf, n_realignment, vad_thr, mas
     E_norm = norm_energy(E)
     
     # Train parameters of gaussian mixture models
-    w, m, sigma = gmm_train(E_norm, gauss_pdf, n_realignment=10)
+    w, m, sigma = gmm_train(E_norm, gauss_pdf, n_realignment=n_realignment)
     
     # Estimate a posterior probability that frame isn't speech
     g0 = eval_frame_post_prob(E_norm, gauss_pdf, w, m, sigma)
@@ -137,9 +151,9 @@ def reverb(signal, impulse_response):
     
     ###########################################################
     # Here is your code
-    
+    signal_reverb = scipy.signal.fftconvolve(signal, impulse_response)[:len(signal)].astype('float32')
     ###########################################################
-    
+
     return signal_reverb
 
 def awgn(signal, sigma_noise):
@@ -149,7 +163,7 @@ def awgn(signal, sigma_noise):
     
     ###########################################################
     # Here is your code
-    
+    signal_noise = (signal + sigma_noise * np.random.randn(len(signal))).astype('float32')
     ###########################################################
-    
+
     return signal_noise
