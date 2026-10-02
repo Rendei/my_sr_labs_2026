@@ -7,8 +7,11 @@
 import os
 import time
 import subprocess
+import base64
 import hashlib
 import tarfile
+import urllib.error
+import urllib.request
 from zipfile import ZipFile
 import glob
 import numpy as np
@@ -41,9 +44,82 @@ def md5(fname):
     return hash_md5.hexdigest()
 
 
+class _RedirectHandler(urllib.request.HTTPRedirectHandler):
+    # Python < 3.11 does not follow 308 (permanent redirect), which is used by the VoxCeleb server
+    http_error_308 = urllib.request.HTTPRedirectHandler.http_error_302
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # 308 behaves like 307: the method and the headers (e.g. Authorization, Range) are kept
+        return super().redirect_request(req, fp, 307 if code == 308 else code, msg, headers, newurl)
+
+
+_opener = urllib.request.build_opener(_RedirectHandler)
+
+
+def download_file(url, out_path, user=None, password=None, max_tries=10, timeout=30, chunk_size=1 << 20):
+    """
+    Download a file with resuming (pure Python replacement of wget -c)
+    :param url: http link
+    :param out_path: path to output file
+    :param user: user_name for basic authentication (optional)
+    :param password: password for basic authentication (optional)
+    :param max_tries: number of attempts before giving up
+    :param timeout: socket timeout in seconds
+    :param chunk_size: size of the chunk to read at once in bytes
+    """
+
+    headers = {}
+    if user is not None:
+        token = base64.b64encode(('%s:%s' % (user, password)).encode()).decode()
+        headers['Authorization'] = 'Basic %s' % token
+
+    part_path = out_path + '.part'
+    for attempt in range(1, max_tries + 1):
+        try:
+            done = os.path.getsize(part_path) if os.path.exists(part_path) else 0
+            request = urllib.request.Request(url, headers=dict(headers, Range='bytes=%d-' % done))
+
+            with _opener.open(request, timeout=timeout) as response:
+                if response.status == 206:  # server resumes the download
+                    total = done + int(response.headers['Content-Length'])
+                    mode = 'ab'
+                else:                       # server sent the whole file
+                    total = int(response.headers.get('Content-Length', 0))
+                    done, mode = 0, 'wb'
+
+                with open(part_path, mode) as f, tqdm(total=total or None, initial=done, unit='B',
+                                                      unit_scale=True, desc=os.path.basename(out_path)) as bar:
+                    while True:
+                        chunk = response.read(chunk_size)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        bar.update(len(chunk))
+
+            if total and os.path.getsize(part_path) != total:
+                raise IOError('Incomplete download: %d of %d bytes' % (os.path.getsize(part_path), total))
+
+            os.replace(part_path, out_path)
+            return
+
+        except urllib.error.HTTPError as e:
+            if e.code == 416:  # requested range is not satisfiable: .part file is already complete
+                os.replace(part_path, out_path)
+                return
+            if e.code in (401, 403, 404):
+                raise
+            print('Download attempt %d/%d failed: %s' % (attempt, max_tries, e))
+        except (urllib.error.URLError, IOError) as e:
+            print('Download attempt %d/%d failed: %s' % (attempt, max_tries, e))
+
+        time.sleep(5)
+
+    raise IOError('Download failed %s after %d attempts.' % (url, max_tries))
+
+
 def download_dataset(lines, user, password, save_path, reload=False):
     """
-    Download datasets from lines with wget
+    Download datasets from lines
     :param lines: list of datasest to load in format <http_link> <md5 sum>\n
     :param user: user_name
     :param password:
@@ -51,19 +127,16 @@ def download_dataset(lines, user, password, save_path, reload=False):
     :param reload: rewrite if file exists
     """
 
+    check_dir(save_path)
+
     for line in lines:
         url = line.strip().split(' ')[0]
         md5gt = line.strip().split(' ')[1]
         outfile = url.split('/')[-1]
 
-        out = -1
         # Download files if needed
         if not os.path.exists(os.path.join(save_path, outfile)) or reload:
-            
-            while out != 0:
-                out = subprocess.call('wget -c --tries=0 --read-timeout=10 %s --user %s --password %s -O %s/%s'%(url, user, password, save_path, outfile), shell=True)
-                
-                time.sleep(120)
+            download_file(url, os.path.join(save_path, outfile), user=user, password=password)
 
         # Check MD5
         md5ck = md5('%s/%s'%(save_path, outfile))

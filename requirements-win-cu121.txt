@@ -1,0 +1,22 @@
+# Local environment (Windows 10, Python 3.9, NVIDIA RTX 3070 Ti, driver supports CUDA 13.2)
+# Used instead of requirements.txt (torch 1.8.1 / Python 3.8 are outdated for this machine).
+#
+# python -m venv .venv   (Python 3.9)
+# .venv\Scripts\python -m pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+# .venv\Scripts\python -m pip install -r requirements-win-cu121.txt
+numpy==1.26.4
+scipy
+pandas
+scikit-learn
+tqdm
+pyyaml
+notebook
+ipykernel
+nbconvert
+matplotlib
+soundfile
+scikit-image
+tabulate
+intervaltree
+# lab6 only, not installed yet:
+# openai-whisper

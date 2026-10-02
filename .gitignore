@@ -2,6 +2,9 @@
 data/*
 !data/lists
 
+# personal study notes
+study_notes/
+
 #idea files
 .idea
 
