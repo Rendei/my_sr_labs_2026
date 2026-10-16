@@ -10,11 +10,13 @@ import torch.nn as nn
 
 from whisper.audio import (
     N_SAMPLES,
-    N_MELS,
     N_FFT,
     HOP_LENGTH,
     mel_filters,
 )
+
+# N_MELS was removed from whisper.audio in recent openai-whisper releases
+N_MELS = 80
 
 
 def pad_or_trim(array, length: int = N_SAMPLES, *, axis: int = -1):

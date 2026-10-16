@@ -62,10 +62,21 @@ class train_dataset_loader(Dataset):
 
         if self.augment:
             ###########################################################
-            # Here is your code
+            # Randomly apply one of four distortions or leave the signal clean
+            augtype = random.randint(0, 4)
 
-            pass
-            
+            if augtype == 1:
+                audio = self.augment_wav.reverberate(audio)
+
+            elif augtype == 2:
+                audio = self.augment_wav.additive_noise('music', audio)
+
+            elif augtype == 3:
+                audio = self.augment_wav.additive_noise('speech', audio)
+
+            elif augtype == 4:
+                audio = self.augment_wav.additive_noise('noise', audio)
+
             ###########################################################
 
         return torch.FloatTensor(audio), self.data_label[index]
@@ -339,10 +350,17 @@ class SSLDownstream(nn.Module):
             x = self.feat_extractor(x)
             
         ###########################################################
-        # Here is your code
+        # (batch, 384, time) -> TDNN -> (batch, 1024, time)
+        x = self.frame_level(x)
+
+        # Statistics pooling removes the time axis: (batch, 2*1024)
+        x = self.pooling_level(x)
+
+        # Segment level gives the speaker embedding: (batch, nOut)
+        x = self.segment_level(x)
 
         ###########################################################
-        
+
         return x
 
 class MainModel(nn.Module):
@@ -391,10 +409,20 @@ def train_network(train_loader, main_model, optimizer, scheduler, num_epoch, ver
         label = torch.as_tensor(data_label, dtype=torch.long, device=device)
 
         ###########################################################
-        # Here is your code
+        main_model.zero_grad()
+
+        nloss, prec1 = main_model(data, label)
+
+        nloss.backward()
+        optimizer.step()
+
+        loss    += nloss.detach().cpu().item()
+        top1    += prec1.detach().cpu().item()
+        counter += 1
+        index   += stepsize
 
         ###########################################################
-        
+
         if verbose:
             print("Epoch {:1.0f}, Batch {:1.0f}, LR {:f} Loss {:f}, Accuracy {:2.3f}%".format(num_epoch, counter, optimizer.param_groups[0]['lr'], loss/counter, top1/counter))
 
@@ -420,10 +448,15 @@ def test_network(test_loader, main_model):
         label = torch.as_tensor(data_label, dtype=torch.long, device=device)
 
         ###########################################################
-        # Here is your code
+        with torch.no_grad():
+            nloss, prec1 = main_model(data, label)
+
+        loss    += nloss.detach().cpu().item()
+        top1    += prec1.detach().cpu().item()
+        counter += 1
 
         ###########################################################
-        
+
     return (loss/counter, top1/counter)
 
 def tar_imp_hists(all_scores, all_labels):

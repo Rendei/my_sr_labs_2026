@@ -7,6 +7,7 @@
 import os
 import time
 import subprocess
+import shutil
 import base64
 import hashlib
 import tarfile
@@ -155,8 +156,15 @@ def concatenate(lines, save_path):
         outfile = line.split()[1]
         md5gt   = line.split()[2]
 
-        # Concatenate files
-        out = subprocess.call('cat %s/%s > %s/%s' %(save_path, infile, save_path, outfile), shell=True)
+        # Concatenate files (pure Python replacement of cat)
+        parts = sorted(glob.glob(os.path.join(save_path, infile)))
+
+        with open(os.path.join(save_path, outfile), 'wb') as fout:
+
+            for part in parts:
+
+                with open(part, 'rb') as fpart:
+                    shutil.copyfileobj(fpart, fout, length=1 << 24)
 
         # Check MD5
         md5ck = md5('%s/%s'%(save_path, outfile))
@@ -166,7 +174,8 @@ def concatenate(lines, save_path):
         else:
             raise Warning('Checksum failed %s.'%outfile)
 
-        out = subprocess.call('rm %s/%s' %(save_path, infile), shell=True)
+        for part in parts:
+            os.remove(part)
 
 
 def download_protocol(lines, save_path, reload=False):
@@ -176,13 +185,15 @@ def download_protocol(lines, save_path, reload=False):
         url     = line.strip()
         outfile = url.split('/')[-1]
 
-        out = 0
         # Download files
         if not os.path.exists(os.path.join(save_path, outfile)) or reload:
-            out = subprocess.call('wget %s -O %s/%s'%(url, save_path, outfile), shell=True)
-        
-        if out != 0:
-            raise ValueError('Download failed %s. If download fails repeatedly, use alternate URL on the VoxCeleb website.'%url)
+            check_dir(save_path)
+
+            try:
+                download_file(url, os.path.join(save_path, outfile))
+            
+            except Exception as e:
+                raise ValueError('Download failed %s (%s). If download fails repeatedly, use alternate URL on the VoxCeleb website.'%(url, e))
 
         print('File %s is downloaded.'%outfile)
 
@@ -219,7 +230,7 @@ def part_extract(save_path, fname, target):
 def split_musan(save_path):
     # Split MUSAN (SLR17) dataset for faster random access
     
-    files = glob.glob('%s/musan/*/*/*.wav'%save_path)
+    files = [x.replace('\\', '/') for x in glob.glob('%s/musan/*/*/*.wav'%save_path)]
 
     audlen = 16000*5
     audstr = 16000*3
@@ -228,7 +239,7 @@ def split_musan(save_path):
         fs,aud = wavfile.read(file)
         writedir = os.path.splitext(file.replace('/musan/','/musan_split/'))[0]
         
-        os.makedirs(writedir)
+        os.makedirs(writedir, exist_ok=True)
         
         for st in range(0,len(aud)-audlen, audstr):
             wavfile.write(writedir+'/%05d.wav'%(st/fs), fs, aud[st:st+audlen])
