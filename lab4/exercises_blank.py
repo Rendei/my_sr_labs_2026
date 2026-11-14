@@ -14,7 +14,11 @@ def tar_imp_hists(all_scores, all_labels):
 
     ###########################################################
     # Here is your code
-    
+    all_scores = np.asarray(all_scores)
+    all_labels = np.asarray(all_labels)
+
+    tar_scores = all_scores[all_labels == 1]  # target trials: label 1
+    imp_scores = all_scores[all_labels == 0]  # impostor trials: label 0
     ###########################################################
     
     tar_scores = np.array(tar_scores)
@@ -35,7 +39,9 @@ def llr(all_scores, all_labels, tar_scores, imp_scores, gauss_pdf):
     
     ###########################################################
     # Here is your code
-    
+    sort_idx          = np.argsort(all_scores)
+    all_scores_sort   = np.asarray(all_scores)[sort_idx]
+    ground_truth_sort = np.asarray(all_labels)[sort_idx] == 1
     ###########################################################
     
     tar_gauss_pdf = np.zeros(len(all_scores))
@@ -44,10 +50,29 @@ def llr(all_scores, all_labels, tar_scores, imp_scores, gauss_pdf):
     
     ###########################################################
     # Here is your code
-    
+    tar_gauss_pdf = gauss_pdf(all_scores_sort, tar_scores_mean, tar_scores_std)  # W(s|Htar)
+    imp_gauss_pdf = gauss_pdf(all_scores_sort, imp_scores_mean, imp_scores_std)  # W(s|Himp)
+    LLR           = np.log(tar_gauss_pdf + 1e-300) - np.log(imp_gauss_pdf + 1e-300)
     ###########################################################
     
     return ground_truth_sort, all_scores_sort, tar_gauss_pdf, imp_gauss_pdf, LLR
+
+
+def error_rates(ground_truth_sort, LLR, tar_scores, imp_scores):
+    # Function to compute FNR and FPR for every threshold LLR[idx] (decision: LLR > LLR[idx]), vectorized version of the loop in map_test
+    
+    tar_llr = np.sort(LLR[ ground_truth_sort])
+    imp_llr = np.sort(LLR[~ground_truth_sort])
+    
+    fnr_thr = np.searchsorted(tar_llr, LLR, side='right')/len(tar_scores)                    # P(Dimp|Htar): targets with LLR <= thr
+    fpr_thr = (len(imp_llr) - np.searchsorted(imp_llr, LLR, side='right'))/len(imp_scores)  # P(Dtar|Himp): impostors with LLR > thr
+    
+    return fnr_thr, fpr_thr
+
+def average_cost(fnr, fpr, P_Htar, C00, C10, C01, C11):
+    # Function to compute average cost (Bayes' risk) for given error rates
+    
+    return C00*(1 - fnr)*P_Htar + C10*fnr*P_Htar + C01*fpr*(1 - P_Htar) + C11*(1 - fpr)*(1 - P_Htar)
 
 def map_test(ground_truth_sort, LLR, tar_scores, imp_scores, P_Htar):
     # Function to perform maximum a posteriori test
@@ -84,7 +109,14 @@ def neyman_pearson_test(ground_truth_sort, LLR, tar_scores, imp_scores, fnr):
     
     ###########################################################
     # Here is your code
-    
+    fnr_thr, fpr_thr = error_rates(ground_truth_sort, LLR, tar_scores, imp_scores)
+
+    # FNR grows and FPR falls with the threshold, so take the largest threshold that keeps FNR <= given value
+    valid   = np.where(fnr_thr <= fnr)[0]
+    thr_idx = valid[np.argmax(LLR[valid])]
+
+    thr = LLR[thr_idx]
+    fpr = fpr_thr[thr_idx]
     ###########################################################
     
     return thr, fpr
@@ -99,7 +131,15 @@ def bayes_test(ground_truth_sort, LLR, tar_scores, imp_scores, P_Htar, C00, C10,
     
     ###########################################################
     # Here is your code
-    
+    fnr_thr, fpr_thr = error_rates(ground_truth_sort, LLR, tar_scores, imp_scores)
+
+    AC_thr  = average_cost(fnr_thr, fpr_thr, P_Htar, C00, C10, C01, C11)
+    thr_idx = np.argmin(AC_thr)
+
+    thr = LLR[thr_idx]
+    fnr = fnr_thr[thr_idx]
+    fpr = fpr_thr[thr_idx]
+    AC  = AC_thr[thr_idx]
     ###########################################################
     
     return thr, fnr, fpr, AC
@@ -115,7 +155,26 @@ def minmax_test(ground_truth_sort, LLR, tar_scores, imp_scores, P_Htar_thr, C00,
     
     ###########################################################
     # Here is your code
-    
+    fnr_thr, fpr_thr = error_rates(ground_truth_sort, LLR, tar_scores, imp_scores)
+
+    # Bayes risk (minimum of average cost over thresholds) for every prior P(Htar)
+    thr_idx_P = np.zeros(len(P_Htar_thr), dtype='int')
+    AC_P      = np.zeros(len(P_Htar_thr))
+
+    for idx, P in enumerate(P_Htar_thr):
+        AC_thr         = average_cost(fnr_thr, fpr_thr, P, C00, C10, C01, C11)
+        thr_idx_P[idx] = np.argmin(AC_thr)
+        AC_P[idx]      = AC_thr[thr_idx_P[idx]]
+
+    # Least favourable prior maximizes the Bayes risk
+    P_idx   = np.argmax(AC_P)
+    thr_idx = thr_idx_P[P_idx]
+
+    thr    = LLR[thr_idx]
+    fnr    = fnr_thr[thr_idx]
+    fpr    = fpr_thr[thr_idx]
+    AC     = AC_P[P_idx]
+    P_Htar = P_Htar_thr[P_idx]
     ###########################################################
     
     return thr, fnr, fpr, AC, P_Htar
